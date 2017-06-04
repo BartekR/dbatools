@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-This command gets specified SSIS Environment and all its variables
+This command gets specified SSIS project and its configuration
 
 .DESCRIPTION
-This command gets all variables from specified environment from SSIS Catalog. All sensitive valus are decrypted.
+This command gets all parameters from specified project in SSIS Catalog. All sensitive valus are decrypted.
 
 .PARAMETER SqlInstance
 The SQL Server instance.
@@ -13,6 +13,10 @@ The SSIS project name
 
 .PARAMETER Folder
 The Folder name that contains the project
+
+.PARAMETER Silent
+Use this switch to disable any kind of verbose messages
+
 
 .EXAMPLE
 Get-DbaSsisProjectConfiguration -SqlInstance localhost -Project SSISProject -Folder DWH_ETL
@@ -36,73 +40,59 @@ function Get-DbaSsisProjectConfiguration {
 		[Alias('SqlServer', 'ServerInstance')]
 		[DbaInstanceParameter[]]$SqlInstance,
 		[string]$Project,
-        [string]$Folder
+        [string]$Folder,
+		[switch]$Silent
 	)
 
     begin {
 
-        try
+    }
+
+    process {
+        foreach($instance in $SqlInstance)
         {
-            Write-Verbose "Connecting to $SqlInstance"
-            $connection = Connect-SqlInstance -SqlInstance $SqlInstance
-        }
-        catch
-        {
-            Stop-Function -Message "Could not connect to $SqlInstance"
-            return
-        }
-        
-
-        if ($connection.versionMajor -lt 11)
-		{
-            Stop-Function -Message "SSISDB catalog is only available on Sql Server 2012 and above, exiting." 
-            return
-		}
-
-        try
-		{
-            $ISNamespace = "Microsoft.SqlServer.Management.IntegrationServices"
-
-			Write-Verbose "Connecting to $SqlInstance Integration Services."
-			$SSIS = New-Object "$ISNamespace.IntegrationServices" $connection
-		}
-		catch
-		{
-            Stop-Function -Message "Could not connect to Integration Services on $Source" -Silent $true
-            return
-		}
-
-        Write-Verbose "Fetching SSIS Catalog and its folders"
-        $catalog = $SSIS.Catalogs | Where-Object { $_.Name -eq "SSISDB" }
-        $srcFolder = $catalog.Folders | Where-Object {$_.Name -eq $Folder}
-
-        if($srcFolder) {
-            $srcProject = $srcFolder.Projects | Where-Object {$_.Name -eq $Project}
-            
-            if($srcProject)
+            try
             {
-                # first iterate project parameters and connection managers
-                foreach($parameter in $srcProject.Parameters)
-                {
-                    [PSCustomObject]@{
-                        Id                      = $parameter.Id
-                        Name                    = $parameter.Name
-                        DataType                = $parameter.DataType
-                        IsRequired              = $parameter.Required
-                        IsSensitive             = $parameter.Sensitive
-                        Description             = $parameter.Description
-                        DesignDefaultvalue      = $parameter.DesignDefaultvalue
-                        DefaultValue            = $parameter.DefaultValue
-                        ValueType               = $parameter.Literal
-                        IsValueSet              = $parameter.ValueSet
-                        ReferencedVariableName  = $parameter.ReferencedVariableName
-                    }
-                } # endforeach
+                Write-Message -Message "Connecting to $SqlInstance" -Level 5
+                $connection = Connect-SqlInstance -SqlInstance $SqlInstance
+            }
+            catch
+            {
+                Stop-Function -Message "Could not connect to $SqlInstance" -Silent $Silent
+                return
+            }
+            
 
-                # then iterate package parameters
-                foreach($package in $srcProject.Packages)
+            if ($connection.versionMajor -lt 11)
+            {
+                Stop-Function -Message "SSISDB catalog is only available on Sql Server 2012 and above, exiting." -Silent $Silent
+                return
+            }
+
+            try
+            {
+                $ISNamespace = "Microsoft.SqlServer.Management.IntegrationServices"
+
+                Write-Message -Message "Connecting to $SqlInstance Integration Services." -Level 5
+                $SSIS = New-Object "$ISNamespace.IntegrationServices" $connection
+            }
+            catch
+            {
+                Stop-Function -Message "Could not connect to Integration Services on $Source" -Silent $true
+                return
+            }
+
+            Write-Message -Message "Fetching SSIS Catalog and its folders" -Level 5
+            $catalog = $SSIS.Catalogs | Where-Object { $_.Name -eq "SSISDB" }
+            $srcFolder = $catalog.Folders | Where-Object {$_.Name -eq $Folder}
+
+            if($srcFolder) {
+                $srcProject = $srcFolder.Projects | Where-Object {$_.Name -eq $Project}
+                
+                if($srcProject)
                 {
-                    foreach($parameter in $package.Parameters)
+                    # first iterate project parameters and connection managers
+                    foreach($parameter in $srcProject.Parameters)
                     {
                         [PSCustomObject]@{
                             Id                      = $parameter.Id
@@ -117,15 +107,31 @@ function Get-DbaSsisProjectConfiguration {
                             IsValueSet              = $parameter.ValueSet
                             ReferencedVariableName  = $parameter.ReferencedVariableName
                         }
+                    } # endforeach($srcProject.Parameters)
+
+                    # then iterate package parameters
+                    foreach($package in $srcProject.Packages)
+                    {
+                        foreach($parameter in $package.Parameters)
+                        {
+                            [PSCustomObject]@{
+                                Id                      = $parameter.Id
+                                Name                    = $parameter.Name
+                                DataType                = $parameter.DataType
+                                IsRequired              = $parameter.Required
+                                IsSensitive             = $parameter.Sensitive
+                                Description             = $parameter.Description
+                                DesignDefaultvalue      = $parameter.DesignDefaultvalue
+                                DefaultValue            = $parameter.DefaultValue
+                                ValueType               = $parameter.Literal
+                                IsValueSet              = $parameter.ValueSet
+                                ReferencedVariableName  = $parameter.ReferencedVariableName
+                            }
+                        } # end foreach($srcProject.Packages)
                     } # end foreach
-                } # end foreach
-
-            } # end if($project)
-        }
-    }
-
-    process {
-
+                } # end if($project)
+            }
+        } # end foreach($SqlInstance)
     }
 
     end {
